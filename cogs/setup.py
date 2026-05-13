@@ -9,55 +9,12 @@ def make_setup_embed(config: dict) -> discord.Embed:
         v = config.get(key)
         return f"`{v}`" if v else "*not set*"
 
-    embed = discord.Embed(
-        title="Bot Configuration",
-        description="Click the buttons below to edit each section. Only filled fields will be saved.",
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="Roles",
-        value=(
-            f"Verified: {val('verified_role')}\n"
-            f"Unverified: {val('unverified_role')}\n"
-            f"Candidate: {val('candidate_role')}\n"
-            f"Leaderboard: {val('leaderboard_role')}\n"
-            f"Academy Pass: {val('academy_pass_role')}"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Phase Roles",
-        value=(
-            f"Phase 1: {val('phase1_role')}\n"
-            f"Phase 2: {val('phase2_role')}\n"
-            f"Phase 3: {val('phase3_role')}\n"
-            f"Phase 4: {val('phase4_role')}\n"
-            f"Phase 5: {val('phase5_role')}"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Channels",
-        value=f"Phase Logs: {val('phase_logs_channel')}",
-        inline=False,
-    )
-    embed.add_field(
-        name="Servers & Links",
-        value=(
-            f"Main Server ID: {val('main_guild_id')}\n"
-            f"Academy Server ID: {val('academy_guild_id')}\n"
-            f"ISB Discord Link: {val('isb_discord_link')}"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Roblox",
-        value=(
-            f"Game Universe ID: {val('game_universe_id')}\n"
-            f"ISB Group ID: {val('isb_group_id')}"
-        ),
-        inline=False,
-    )
+    embed = discord.Embed(title="Bot Configuration", description="Click the buttons below to edit each section.", color=discord.Color.blurple())
+    embed.add_field(name="Roles", value=(f"Verified: {val('verified_role')}\nUnverified: {val('unverified_role')}\nCandidate: {val('candidate_role')}\nLeaderboard: {val('leaderboard_role')}\nAcademy Pass: {val('academy_pass_role')}"), inline=False)
+    embed.add_field(name="Phase Roles", value=(f"Phase 1: {val('phase1_role')}\nPhase 2: {val('phase2_role')}\nPhase 3: {val('phase3_role')}\nPhase 4: {val('phase4_role')}\nPhase 5: {val('phase5_role')}"), inline=False)
+    embed.add_field(name="Channels", value=f"Phase Logs: {val('phase_logs_channel')}", inline=False)
+    embed.add_field(name="Servers & Links", value=(f"Main Server ID: {val('main_guild_id')}\nAcademy Server ID: {val('academy_guild_id')}\nISB Discord Link: {val('isb_discord_link')}"), inline=False)
+    embed.add_field(name="Roblox", value=(f"Game Universe ID: {val('game_universe_id')}\nISB Group ID: {val('isb_group_id')}"), inline=False)
     return embed
 
 
@@ -69,13 +26,7 @@ class RolesModal(discord.ui.Modal, title="Configure Roles"):
     academy_pass_role = discord.ui.TextInput(label="Academy Pass Role ID", required=False, placeholder="e.g. 123456789012345678")
 
     async def on_submit(self, interaction: discord.Interaction):
-        for key, field in [
-            ("verified_role", self.verified_role),
-            ("unverified_role", self.unverified_role),
-            ("candidate_role", self.candidate_role),
-            ("leaderboard_role", self.leaderboard_role),
-            ("academy_pass_role", self.academy_pass_role),
-        ]:
+        for key, field in [("verified_role", self.verified_role), ("unverified_role", self.unverified_role), ("candidate_role", self.candidate_role), ("leaderboard_role", self.leaderboard_role), ("academy_pass_role", self.academy_pass_role)]:
             if field.value.strip():
                 await set_config(key, field.value.strip())
         config = await get_all_config()
@@ -90,13 +41,7 @@ class PhaseRolesModal(discord.ui.Modal, title="Configure Phase Roles"):
     phase5 = discord.ui.TextInput(label="Phase 5 Role ID", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
-        for key, field in [
-            ("phase1_role", self.phase1),
-            ("phase2_role", self.phase2),
-            ("phase3_role", self.phase3),
-            ("phase4_role", self.phase4),
-            ("phase5_role", self.phase5),
-        ]:
+        for key, field in [("phase1_role", self.phase1), ("phase2_role", self.phase2), ("phase3_role", self.phase3), ("phase4_role", self.phase4), ("phase5_role", self.phase5)]:
             if field.value.strip():
                 await set_config(key, field.value.strip())
         config = await get_all_config()
@@ -104,7 +49,7 @@ class PhaseRolesModal(discord.ui.Modal, title="Configure Phase Roles"):
 
 
 class ChannelsModal(discord.ui.Modal, title="Configure Channels"):
-    phase_logs = discord.ui.TextInput(label="Phase Logs Channel ID", required=False, placeholder="e.g. 123456789012345678")
+    phase_logs = discord.ui.TextInput(label="Phase Logs Channel ID", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         if self.phase_logs.value.strip():
@@ -119,11 +64,7 @@ class ServersModal(discord.ui.Modal, title="Configure Servers & Links"):
     isb_link = discord.ui.TextInput(label="ISB Discord Invite Link", required=False, placeholder="https://discord.gg/...")
 
     async def on_submit(self, interaction: discord.Interaction):
-        for key, field in [
-            ("main_guild_id", self.main_guild),
-            ("academy_guild_id", self.academy_guild),
-            ("isb_discord_link", self.isb_link),
-        ]:
+        for key, field in [("main_guild_id", self.main_guild), ("academy_guild_id", self.academy_guild), ("isb_discord_link", self.isb_link)]:
             if field.value.strip():
                 await set_config(key, field.value.strip())
         config = await get_all_config()
@@ -176,17 +117,13 @@ class SetupCog(commands.Cog, name="Setup"):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_cmd(self, interaction: discord.Interaction):
         config = await get_all_config()
-        await interaction.response.send_message(
-            embed=make_setup_embed(config), view=SetupView(), ephemeral=True
-        )
+        await interaction.response.send_message(embed=make_setup_embed(config), view=SetupView(), ephemeral=True)
 
     @app_commands.command(name="editsetup", description="Edit the current bot configuration")
     @app_commands.checks.has_permissions(administrator=True)
     async def editsetup(self, interaction: discord.Interaction):
         config = await get_all_config()
-        await interaction.response.send_message(
-            embed=make_setup_embed(config), view=SetupView(), ephemeral=True
-        )
+        await interaction.response.send_message(embed=make_setup_embed(config), view=SetupView(), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

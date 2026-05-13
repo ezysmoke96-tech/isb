@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 
-from utils.db import get_config
+from utils.db import get_autoroles
 
 
 class EventsCog(commands.Cog, name="Events"):
@@ -10,18 +10,25 @@ class EventsCog(commands.Cog, name="Events"):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        print(f"{member} joined {member.guild.name}")
+        print(f"{member} joined {member.guild.name} (bot={member.bot})")
 
-        unverified_role_id = await get_config("unverified_role")
-        if not unverified_role_id:
+        role_ids = await get_autoroles(str(member.guild.id))
+        if not role_ids:
             return
 
-        role = member.guild.get_role(int(unverified_role_id))
-        if role:
+        roles_to_add = []
+        for rid in role_ids:
+            role = member.guild.get_role(int(rid))
+            if role:
+                roles_to_add.append(role)
+
+        if roles_to_add:
             try:
-                await member.add_roles(role, reason="Auto-assigned on join")
+                await member.add_roles(*roles_to_add, reason="Autorole on join")
             except discord.Forbidden:
-                print(f"Missing permissions to assign Unverified role to {member}")
+                print(f"Missing permissions to assign autoroles to {member}")
+            except discord.HTTPException as e:
+                print(f"Failed to assign autoroles to {member}: {e}")
 
 
 async def setup(bot: commands.Bot):
