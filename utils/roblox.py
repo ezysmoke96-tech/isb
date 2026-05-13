@@ -1,17 +1,9 @@
+import asyncio
 import os
 import aiohttp
 from datetime import datetime, timezone
 
 MAIN_GROUP_ID = 36051087
-SECURITY_BUREAU_GROUP_ID = 34100596
-
-
-def _cookie_jar() -> dict:
-    """Returns cookie header dict if ROBLOX_COOKIE is configured, else empty."""
-    cookie = os.environ.get("ROBLOX_COOKIE", "").strip()
-    if cookie:
-        return {".ROBLOSECURITY": cookie}
-    return {}
 
 
 def _headers() -> dict:
@@ -53,7 +45,8 @@ async def get_user_groups(user_id: int) -> list:
             return data.get("data", [])
 
 
-async def get_group_allies(group_id: int) -> list[int]:
+async def get_group_allies(group_id: int) -> list[dict]:
+    """Returns list of {id, name} dicts for all allied groups."""
     allies = []
     async with aiohttp.ClientSession() as session:
         for start in range(0, 300, 100):
@@ -67,14 +60,36 @@ async def get_group_allies(group_id: int) -> list[int]:
                 groups = data.get("relatedGroups", [])
                 if not groups:
                     break
-                allies.extend(g["id"] for g in groups)
+                allies.extend({"id": g["id"], "name": g["name"]} for g in groups)
     return allies
 
 
+async def _check_pending_in_group(session: aiohttp.ClientSession, user_id: int, group: dict) -> dict | None:
+    """Returns the group dict if user has a pending join request, else None."""
+    try:
+        async with session.get(
+            f"https://groups.roblox.com/v1/groups/{group['id']}/join-requests/users/{user_id}",
+            headers=_headers(),
+        ) as resp:
+            if resp.status == 200:
+                return group
+    except Exception:
+        pass
+    return None
+
+
+async def get_user_pending_in_groups(user_id: int, ally_groups: list[dict]) -> list[dict]:
+    """
+    Returns subset of ally_groups where the user has a pending join request.
+    Requires ROBLOX_COOKIE for private groups; public groups work without it.
+    """
+    async with aiohttp.ClientSession() as session:
+        tasks = [_check_pending_in_group(session, user_id, g) for g in ally_groups]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    return [r for r in results if isinstance(r, dict)]
+
+
 async def get_badge_info(user_id: int) -> tuple[int, bool, str | None]:
-    """Returns (badge_count, is_farming_suspicious, top_game_name).
-    Requires ROBLOX_COOKIE env var — Roblox's badge API mandates authentication.
-    Returns (-1, False, None) if no cookie is configured."""
     cookie = os.environ.get("ROBLOX_COOKIE", "").strip()
     if not cookie:
         return -1, False, None
@@ -83,29 +98,21 @@ async def get_badge_info(user_id: int) -> tuple[int, bool, str | None]:
     cursor = None
     game_counts: dict[int, int] = {}
     game_names: dict[int, str] = {}
-
     headers = {"Cookie": f".ROBLOSECURITY={cookie}"}
 
     async with aiohttp.ClientSession(headers=headers) as session:
         while True:
-            url = (
-                f"https://badges.roblox.com/v1/users/{user_id}/badges"
-                f"?limit=100&sortOrder=Asc"
-            )
+            url = f"https://badges.roblox.com/v1/users/{user_id}/badges?limit=100&sortOrder=Asc"
             if cursor:
                 url += f"&cursor={cursor}"
-
             async with session.get(url) as resp:
                 if resp.status != 200:
                     break
                 data = await resp.json()
-
                 if data.get("errors"):
                     break
-
                 page = data.get("data", [])
                 total += len(page)
-
                 for badge in page:
                     awarder = badge.get("awarder", {})
                     gid = awarder.get("id")
@@ -113,14 +120,12 @@ async def get_badge_info(user_id: int) -> tuple[int, bool, str | None]:
                     if gid:
                         game_counts[gid] = game_counts.get(gid, 0) + 1
                         game_names[gid] = gname
-
                 cursor = data.get("nextPageCursor")
                 if not cursor:
                     break
 
     is_suspicious = False
     top_game_name = None
-
     if total > 30 and game_counts:
         top_gid = max(game_counts, key=game_counts.get)
         top_count = game_counts[top_gid]

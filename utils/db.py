@@ -54,6 +54,11 @@ async def init_db():
                 user_id     TEXT NOT NULL,
                 PRIMARY KEY (message_id, user_id)
             );
+            CREATE TABLE IF NOT EXISTS autoroles (
+                guild_id  TEXT NOT NULL,
+                role_id   TEXT NOT NULL,
+                PRIMARY KEY (guild_id, role_id)
+            );
         """)
         await db.commit()
 
@@ -196,8 +201,6 @@ async def delete_academy_pass_dm(discord_id: str):
         await db.commit()
 
 
-# ── Timed Bans ────────────────────────────────────────────────────────────────
-
 async def save_timed_ban(discord_id: str, guild_id: str, unban_at: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -224,8 +227,6 @@ async def delete_timed_ban(discord_id: str, guild_id: str):
         )
         await db.commit()
 
-
-# ── Giveaways ─────────────────────────────────────────────────────────────────
 
 async def save_giveaway(message_id: str, channel_id: str, guild_id: str, prize: str, num_winners: int, end_at: int):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -263,7 +264,6 @@ async def get_latest_giveaway_in_channel(channel_id: str, active_only: bool = Tr
 
 
 async def add_giveaway_entry(message_id: str, user_id: str) -> bool:
-    """Returns True if successfully entered, False if already entered."""
     async with aiosqlite.connect(DB_PATH) as db:
         try:
             await db.execute(
@@ -298,3 +298,37 @@ async def get_active_giveaways_ending_before(timestamp: int) -> list:
         ) as cur:
             rows = await cur.fetchall()
             return [{"message_id": r[0], "channel_id": r[1], "guild_id": r[2], "prize": r[3], "num_winners": r[4], "end_at": r[5]} for r in rows]
+
+
+# ── Autoroles ──────────────────────────────────────────────────────────────────
+
+async def get_autoroles(guild_id: str) -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT role_id FROM autoroles WHERE guild_id = ?", (guild_id,)
+        ) as cur:
+            return [row[0] for row in await cur.fetchall()]
+
+
+async def add_autorole(guild_id: str, role_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO autoroles (guild_id, role_id) VALUES (?, ?)",
+            (guild_id, role_id),
+        )
+        await db.commit()
+
+
+async def remove_autorole(guild_id: str, role_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM autoroles WHERE guild_id = ? AND role_id = ?",
+            (guild_id, role_id),
+        )
+        await db.commit()
+
+
+async def clear_autoroles(guild_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM autoroles WHERE guild_id = ?", (guild_id,))
+        await db.commit()
