@@ -72,4 +72,6 @@ async def main():
 
 
 if __name__ == "__main__":
+    if not TOKEN:
+        raise RuntimeError("DISCORD_BOT_TOKEN is not set. Add it to your secrets.")
     asyncio.run(main())
