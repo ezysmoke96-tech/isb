@@ -52,9 +52,6 @@ async def _build_roblox_embed(
     *,
     title_prefix: str = "Roblox Info",
 ) -> discord.Embed | None:
-    """
-    Shared logic for /info and /whois. Returns a built embed or None if user not found.
-    """
     user_data = await rapi.get_user_by_username(roblox_username)
     if not user_data:
         return None
@@ -131,7 +128,18 @@ async def _build_roblox_embed(
     return embed
 
 
-# ── Persistent View ────────────────────────────────────────────────────────────
+async def _apply_nick_all_guilds(client: discord.Client, user_id: int, nick: str):
+    """Set nickname in every guild the bot shares with this user."""
+    for guild in client.guilds:
+        member = guild.get_member(user_id)
+        if member:
+            try:
+                await member.edit(nick=nick, reason="Roblox verification")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+
+# ── Persistent verify view ─────────────────────────────────────────────────────
 
 class VerifyView(discord.ui.View):
     def __init__(self):
@@ -148,6 +156,7 @@ class VerifyView(discord.ui.View):
 
         roblox_username = pending["roblox_username"]
         code = pending["code"]
+        origin_guild_id = pending.get("origin_guild_id")
 
         user_data = await rapi.get_user_by_username(roblox_username)
         if not user_data:
@@ -156,23 +165,21 @@ class VerifyView(discord.ui.View):
 
         found = await rapi.check_profile_for_code(user_data["id"], code)
         if not found:
-            await interaction.followup.send(f"❌ The code `{code}` wasn't found in your Roblox **About Me**.\nMake sure you saved it, then try again.", ephemeral=True)
+            await interaction.followup.send(
+                f"❌ The code `{code}` wasn't found in your Roblox **About Me**.\nMake sure you saved it, then try again.",
+                ephemeral=True,
+            )
             return
 
         await delete_pending_verification(str(interaction.user.id))
         await save_verified_user(str(interaction.user.id), str(user_data["id"]), roblox_username)
 
-        guild_id = await get_config("main_guild_id")
-        verified_role_id = await get_config("verified_role")
-        unverified_role_id = await get_config("unverified_role")
-        candidate_role_id = await get_config("candidate_role")
-
+        # Apply roles in the origin guild (where /verify was run)
+        warning_lines: list[str] = []
         roles_applied = False
-        nick_applied = False
-        warning_lines = []
 
-        if guild_id:
-            guild = interaction.client.get_guild(int(guild_id))
+        if origin_guild_id:
+            guild = interaction.client.get_guild(int(origin_guild_id))
             if guild:
                 try:
                     member = await guild.fetch_member(interaction.user.id)
@@ -180,6 +187,10 @@ class VerifyView(discord.ui.View):
                     member = None
 
                 if member:
+                    verified_role_id = await get_config("verified_role")
+                    unverified_role_id = await get_config("unverified_role")
+                    candidate_role_id = await get_config("candidate_role")
+
                     to_add, to_remove = [], []
                     for rid in [verified_role_id, candidate_role_id]:
                         if rid:
@@ -196,37 +207,26 @@ class VerifyView(discord.ui.View):
                         if to_remove:
                             await member.remove_roles(*to_remove, reason="Roblox verification")
                         roles_applied = True
-                    except discord.Forbidden:
-                        warning_lines.append("⚠️ Could not apply roles — missing **Manage Roles** permission.")
-                    except discord.HTTPException as e:
-                        warning_lines.append(f"⚠️ Role update failed: {e}")
-                    try:
-                        await member.edit(nick=roblox_username, reason="Roblox verification")
-                        nick_applied = True
-                    except discord.Forbidden:
-                        warning_lines.append("⚠️ Could not set nickname.")
-                else:
-                    warning_lines.append("⚠️ You don't appear to be in the main server.")
-            else:
-                warning_lines.append("⚠️ Main server not found in bot's cache.")
-        else:
-            warning_lines.append("⚠️ Main server not configured (`/setup`).")
+                    except (discord.Forbidden, discord.HTTPException):
+                        warning_lines.append("⚠️ Could not update roles.")
+
+        # Set nickname in ALL mutual guilds
+        await _apply_nick_all_guilds(interaction.client, interaction.user.id, roblox_username)
 
         applied_parts = []
         if roles_applied:
             applied_parts.append("✅ Roles updated")
-        if nick_applied:
-            applied_parts.append(f"✅ Nickname set to **{roblox_username}**")
+        applied_parts.append(f"✅ Nickname set to **{roblox_username}** in all shared servers")
 
-        description = f"You are now verified as **[{roblox_username}](https://www.roblox.com/users/{user_data['id']}/profile)**."
-        if applied_parts:
-            description += "\n" + " · ".join(applied_parts)
+        description = f"You are now verified as **[{roblox_username}](https://www.roblox.com/users/{user_data['id']}/profile)**.\n"
+        description += " · ".join(applied_parts)
         if warning_lines:
             description += "\n\n" + "\n".join(warning_lines)
 
         embed = discord.Embed(title="✅ Verification Successful!", description=description, color=discord.Color.green())
         embed.set_footer(text="You may now remove the code from your Roblox About Me.")
         await interaction.followup.send(embed=embed, ephemeral=True)
+
         button.disabled = True
         try:
             await interaction.message.edit(view=self)
@@ -240,8 +240,6 @@ class RobloxCog(commands.Cog, name="Roblox"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ─── /info ────────────────────────────────────────────────────────────────
-
     @app_commands.command(name="info", description="Show detailed Roblox info for a user")
     @app_commands.describe(roblox_username="The Roblox username to look up")
     async def info(self, interaction: discord.Interaction, roblox_username: str):
@@ -252,37 +250,21 @@ class RobloxCog(commands.Cog, name="Roblox"):
             return
         await interaction.followup.send(embed=embed)
 
-    # ─── /whois ───────────────────────────────────────────────────────────────
-
     @app_commands.command(name="whois", description="Look up the Roblox account a Discord member is verified as")
     @app_commands.describe(member="The Discord member to look up")
     async def whois(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer()
-
         entry = await get_verified_user(str(member.id))
         if not entry:
-            embed = discord.Embed(
-                title="Not Verified",
-                description=f"{member.mention} has not linked a Roblox account.\nThey can use `/verify` to do so.",
-                color=discord.Color.orange(),
-            )
+            embed = discord.Embed(title="Not Verified", description=f"{member.mention} has not linked a Roblox account.\nThey can use `/verify` to do so.", color=discord.Color.orange())
             await interaction.followup.send(embed=embed)
             return
-
-        roblox_username = entry["roblox_username"]
-        embed = await _build_roblox_embed(interaction, roblox_username, title_prefix="Whois")
+        embed = await _build_roblox_embed(interaction, entry["roblox_username"], title_prefix="Whois")
         if embed is None:
-            await interaction.followup.send(embed=discord.Embed(
-                title="❌ Roblox Account Not Found",
-                description=f"{member.mention} was verified as `{roblox_username}` but that account no longer exists on Roblox.",
-                color=discord.Color.red(),
-            ))
+            await interaction.followup.send(embed=discord.Embed(title="❌ Roblox Account Not Found", description=f"{member.mention} was verified as `{entry['roblox_username']}` but that account no longer exists.", color=discord.Color.red()))
             return
-
         embed.set_author(name=f"{member.display_name} ({member})", icon_url=member.display_avatar.url)
         await interaction.followup.send(embed=embed)
-
-    # ─── /bgcheck ─────────────────────────────────────────────────────────────
 
     @app_commands.command(name="bgcheck", description="Run a background check on a Roblox user")
     @app_commands.describe(roblox_username="The Roblox username to check")
@@ -292,7 +274,7 @@ class RobloxCog(commands.Cog, name="Roblox"):
 
         user_data = await rapi.get_user_by_username(roblox_username)
         if not user_data:
-            await interaction.followup.send(embed=discord.Embed(title="❌ User Not Found", description=f"No Roblox account found with username `{roblox_username}`.", color=discord.Color.red()))
+            await interaction.followup.send(embed=discord.Embed(title="❌ User Not Found", description=f"No account found for `{roblox_username}`.", color=discord.Color.red()))
             return
 
         user_id = user_data["id"]
@@ -342,46 +324,24 @@ class RobloxCog(commands.Cog, name="Roblox"):
             color = discord.Color.green()
             verdict = "✅ Passes background check"
 
-        embed = discord.Embed(
-            title=f"BGCheck — {roblox_username}",
-            url=f"https://www.roblox.com/users/{user_id}/profile",
-            description=f"**Display Name:** {display_name}\n**Roblox Banned:** {'Yes ❌' if rblx_banned else 'No ✅'}",
-            color=color,
-        )
+        embed = discord.Embed(title=f"BGCheck — {roblox_username}", url=f"https://www.roblox.com/users/{user_id}/profile",
+            description=f"**Display Name:** {display_name}\n**Roblox Banned:** {'Yes ❌' if rblx_banned else 'No ✅'}", color=color)
 
-        embed.add_field(
-            name="Account Age",
-            value=f"{'✅' if age_ok else '❌'} **{age_days}** days {'(meets 350+ requirement)' if age_ok else '(needs 350+)'}",
-            inline=False,
-        )
-
+        embed.add_field(name="Account Age", value=f"{'✅' if age_ok else '❌'} **{age_days}** days {'(meets 350+)' if age_ok else '(needs 350+)'}", inline=False)
         if cookie_missing:
             embed.add_field(name="Badges", value="⚙️ **Not checked** — add `ROBLOX_COOKIE` secret to enable.", inline=False)
         else:
-            embed.add_field(
-                name="Badges",
-                value=(
-                    f"{'✅' if badges_ok else '❌'} **{badge_count}** badges {'(meets 175+)' if badges_ok else '(needs 175+)'}\n"
-                    + (f"⚠️ **Farming detected** — majority from `{top_game}`" if farming_suspicious else "No farming detected")
-                ),
-                inline=False,
-            )
+            embed.add_field(name="Badges", value=(f"{'✅' if badges_ok else '❌'} **{badge_count}** badges {'(meets 175+)' if badges_ok else '(needs 175+)'}\n" + (f"⚠️ **Farming detected** — majority from `{top_game}`" if farming_suspicious else "No farming detected")), inline=False)
 
-        embed.add_field(
-            name="TGEAR Galactic Empire",
-            value=f"{'✅ Member' if in_main_group else '❌ Not a member'}" + (f" — Rank: **{main_rank}**" if main_rank else ""),
-            inline=False,
-        )
+        embed.add_field(name="TGEAR Galactic Empire", value=f"{'✅ Member' if in_main_group else '❌ Not a member'}" + (f" — Rank: **{main_rank}**" if main_rank else ""), inline=False)
 
         if ally_memberships:
-            lines = [f"• **{m['name']}** — {m['rank']}" for m in ally_memberships]
-            embed.add_field(name=f"Allied Divisions — Member ({len(ally_memberships)})", value="\n".join(lines), inline=False)
+            embed.add_field(name=f"Allied Divisions — Member ({len(ally_memberships)})", value="\n".join(f"• **{m['name']}** — {m['rank']}" for m in ally_memberships), inline=False)
         else:
             embed.add_field(name="Allied Divisions — Member", value="Not in any allied divisions", inline=False)
 
         if pending_groups:
-            lines = [f"• **{g['name']}**" for g in pending_groups]
-            embed.add_field(name=f"Allied Divisions — Pending ({len(pending_groups)})", value="\n".join(lines), inline=False)
+            embed.add_field(name=f"Allied Divisions — Pending ({len(pending_groups)})", value="\n".join(f"• **{g['name']}**" for g in pending_groups), inline=False)
         else:
             embed.add_field(name="Allied Divisions — Pending", value="No pending requests", inline=False)
 
@@ -402,8 +362,6 @@ class RobloxCog(commands.Cog, name="Roblox"):
         embed.set_footer(text=f"Roblox ID: {user_id}")
         await interaction.followup.send(embed=embed)
 
-    # ─── /verify ──────────────────────────────────────────────────────────────
-
     @app_commands.command(name="verify", description="Start Roblox verification for yourself")
     @app_commands.describe(roblox_username="Your Roblox username")
     async def verify(self, interaction: discord.Interaction, roblox_username: str):
@@ -413,10 +371,11 @@ class RobloxCog(commands.Cog, name="Roblox"):
             return
         user_data = await rapi.get_user_by_username(roblox_username)
         if not user_data:
-            await interaction.response.send_message(embed=discord.Embed(title="❌ User Not Found", description=f"No Roblox account found with username `{roblox_username}`.", color=discord.Color.red()), ephemeral=True)
+            await interaction.response.send_message(embed=discord.Embed(title="❌ User Not Found", description=f"No Roblox account found for `{roblox_username}`.", color=discord.Color.red()), ephemeral=True)
             return
         code = _gen_code()
-        await save_pending_verification(str(interaction.user.id), roblox_username, code)
+        origin_guild_id = str(interaction.guild.id) if interaction.guild else None
+        await save_pending_verification(str(interaction.user.id), roblox_username, code, origin_guild_id)
         dm_embed = discord.Embed(
             title="Roblox Verification",
             description=(
@@ -434,8 +393,6 @@ class RobloxCog(commands.Cog, name="Roblox"):
             await interaction.response.send_message("📬 Check your DMs! Follow the steps to complete verification.", ephemeral=True)
         except discord.Forbidden:
             await interaction.response.send_message("❌ I couldn't DM you. Please enable DMs from server members and try again.", ephemeral=True)
-
-    # ─── /unverify ────────────────────────────────────────────────────────────
 
     @app_commands.command(name="unverify", description="Remove a user's Roblox verification")
     @app_commands.describe(member="The Discord member to unverify")
@@ -473,8 +430,6 @@ class RobloxCog(commands.Cog, name="Roblox"):
         embed.add_field(name="Roblox Account", value=roblox_username, inline=True)
         embed.add_field(name="Actioned by", value=interaction.user.mention, inline=True)
         await interaction.response.send_message(embed=embed)
-
-    # ─── /gameban & /ungameban ────────────────────────────────────────────────
 
     @app_commands.command(name="gameban", description="Mark a Roblox user as banned from the main game")
     @app_commands.describe(roblox_username="Roblox username to ban", reason="Reason")
